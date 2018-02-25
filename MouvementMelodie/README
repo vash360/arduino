@@ -1,0 +1,12 @@
+.ino Arduino file made with Arduino 1.8.5 Augmented 0.67.5_STA ( http://www.duinoedu.com/arduinoaugmente.html )
+.fzz Fritzing file made with Fritzing 0.9.3b 64 bits.
+.abp Ardublocks file made with Ardublocks module for Arduino included with Arduino 1.8.5 Augmented 0.67.5_STA
+.jpg image file of the wiring.
+HC-SR04.fzpz extension part for Fritzing to use the HC-SR04 distance sensor, use parts-> Import to get it with Fritzing.
+
+
+Description :
+
+This circuit either plays the Star Wars theme with the piezzo or makes the LED blink when the distance in 
+front of the sensor is less than 20cm
+The choice between the song and the LED blinking is made with the value of a potentiometer
