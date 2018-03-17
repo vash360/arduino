@@ -37,6 +37,8 @@ void setup()
   OneSheeld.begin();
   SMS.setOnSmsReceive(&SMSReceivedFunction);
   Terminal.println("Init");
+
+  digitalWrite(relayPin, HIGH); //Switch Off
 }
 
 void loop() 
@@ -48,13 +50,13 @@ void loop()
     if(!strcmp(on,VoiceRecognition.getLastCommand()))
     {
       //Then turn the relay on
-     digitalWrite(relayPin, HIGH); //Switch On
+     digitalWrite(relayPin, LOW); //Switch On
     }
     //Compare the last command received by the Arduino Voice Recognition Shield with the command "off"
     else if(!strcmp(off,VoiceRecognition.getLastCommand()))
     {
       //Then turn the relay off
-     digitalWrite(relayPin, LOW); //Switch Off
+     digitalWrite(relayPin, HIGH); //Switch Off
     }
   }
 }
@@ -68,11 +70,11 @@ void SMSReceivedFunction (String phoneNumber ,String messageBody)
   Terminal.println(messageBody);
 
   if (messageBody.equalsIgnoreCase(String("on"))){
-      digitalWrite(relayPin, HIGH); //Switch On
+      digitalWrite(relayPin, LOW); //Switch On
   }
   else
   if (messageBody.equalsIgnoreCase(String("off"))){
-      digitalWrite(relayPin, LOW); //Switch Off
+      digitalWrite(relayPin, HIGH); //Switch Off
   }
 }
 
