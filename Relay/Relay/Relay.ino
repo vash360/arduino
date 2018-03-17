@@ -3,14 +3,15 @@
 
 /*
  * We are using the Arduino shield OneSheeld
- * 
+ * //https://1sheeld.com/
+
 OPTIONAL:
 To reduce the library compiled size and limit its memory usage, you
 can specify which shields you want to include in your sketch by
 defining CUSTOM_SETTINGS and the shields respective INCLUDE_ define. 
 */
 
-//don't forget to use serial switch to SW to upload and set it to HW to run on the shield
+//Don't forget to set the serial switch on the OneSheeld to SW to upload and set it to HW to run on the shield
 
 #define CUSTOM_SETTINGS
 #define INCLUDE_SMS_SHIELD
