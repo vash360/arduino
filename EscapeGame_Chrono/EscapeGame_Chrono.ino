@@ -1,42 +1,63 @@
 
 /* David Lanier - dlanier@free.fr
- *  Escape game count down
+ *  Escape game count down chronometer 
 */
 
 #include <LedControl.h>
 #include <EEPROM.h>
+#include <SoftwareSerial.h>  //Software Serial Port 
 
-//Using 4 MAX 7219 connected as a display dot matrix LED screen
+#define RxD 9      //Pin 9 for RX
+#define TxD 10     //Pin 10 for TX
+#define PUSHBUTTONPIN 7   // Pushbutton connected to pin 7
+
+//Bluetoooh recepter HC06
+SoftwareSerial BTSerie(RxD,TxD); 
+
+//display screen : Using 4 MAX 7219 connected as a dot matrix LED screen
 static const int din = 13, clk = 11, cs = 12; //pins for the 4 MAX 7219
 static const int devices = 4;//Number of MAX7219 connected together
 LedControl lc = LedControl(din, clk, cs, devices);
 
-bool finished = false;//Is countdown finished ?
+//Globals for the chronometer
+static const bool bBlinkAtStartup = false; //do we want the chronometer to blink at startup ?
+static bool bFinished             = false;//Is countdown finished ?
+static bool bStarted              = false;//Has countdown started ?
+static bool bPaused               = false;//Is countdown paused ?
+static bool bBlink                = bBlinkAtStartup; //To blink before starting or when finished
+static bool bShowTime             = true; //Used in blink mode to show/hide the display to produce a blink
 
-#define USE_SERIAL Serial
-#define eeAddress 0 //Address for the Arduino's EEPROM (internal non volatile memory)
+static const int BlinkDelay         = 400; //Delay in milliseconds for blinking
+static unsigned long BlinkStartTime = 0;//Time stored to toggle when we show/hide when blinking
 
 // macros from DateTime.h
-/* Useful Constants */
-#define SECS_PER_MIN  (60UL)
-#define SECS_PER_HOUR (3600UL)
-#define SECS_PER_DAY  (SECS_PER_HOUR * 24L)
+  /* Useful Constants */
+  #define SECS_PER_MIN  (60UL)
+  #define SECS_PER_HOUR (3600UL)
+  #define SECS_PER_DAY  (SECS_PER_HOUR * 24L)
+  
+  /* Useful Macros for getting elapsed time */
+  #define numberOfSeconds(_time_) (_time_ % SECS_PER_MIN)  
+  #define numberOfMinutes(_time_) ((_time_ / SECS_PER_MIN) % SECS_PER_MIN)
+  #define numberOfHours(_time_) (( _time_% SECS_PER_DAY) / SECS_PER_HOUR)
+  #define elapsedDays(_time_) ( _time_ / SECS_PER_DAY)  
 
-/* Useful Macros for getting elapsed time */
-#define numberOfSeconds(_time_) (_time_ % SECS_PER_MIN)  
-#define numberOfMinutes(_time_) ((_time_ / SECS_PER_MIN) % SECS_PER_MIN)
-#define numberOfHours(_time_) (( _time_% SECS_PER_DAY) / SECS_PER_HOUR)
-#define elapsedDays(_time_) ( _time_ / SECS_PER_DAY)  
+//The display on the screen is going to be made with 4 digits : m1 m2 : s1 s2, with m1 being the first character of the minutes, m2 the second char of the minutes, same apply to s1 and s2 for the seconds.
+static char m1 = '0', m2 = '0', s1 = '0', s2 = '0'; //current display time of the game
 
-//The display is going to be made with 4 digits, m1 m2 : s1 s2 m1m2 being the number of minutes and s1s2 being the number of seconds displayed
-char m1 = '0', m2 = '0', s1 = '0', s2 = '0'; //current display time of the game
+//INITIAL TIME OF THE GAME
+static int  GameDurationInMinutes = 30;      
 
-static unsigned long  TimerStart = 30*SECS_PER_MIN*1000;//In milliseconds, this is the time we have when the game starts, modify this to add/reove some time
+static unsigned long  TimeElapsedBeforePause   = 0;//When entering in pause mode, we store the time elapsed in that variable
+static unsigned long  StartTime                = 0;//Is the time where we start the count down or unpause the game 
 
-const byte semiColonChar = B00100100;//To display a semi colon character to separate minutes and seconds
+#define eeAddress 0 //Location in EEPROM to store game duration to retrieve it when powering on again the Arduino
+
+//For drawing numbers on the LED screen
+static const byte colonChar = B00100100;//To display a colon character to separate minutes and seconds
 
 //Array to display the numbers as 8x5 dots matrix LED
-const byte numberArray[313] =
+static const byte numberArray[313] =
 {
   B01111100, B10100010, B10010010, B10001010, B01111100, /*columns for 0*/
   B00100010, B01000010, B11111110, B00000010, B00000010, /*columns for 1*/
@@ -50,7 +71,8 @@ const byte numberArray[313] =
   B01100100, B10010010, B10010010, B10010010, B01111100  /*columns for 9*/
 };
 
-int GetAddressInArray(char c) {   //gets the location of the character in the numberArray
+//Gets the location of the character in the numberArray
+int GetAddressInArray(char c) {   
   int location = 0;
   if (c >= '0' && c <= '9'){
     location = 5 * (c - '0'); //5 because we have 5 columns for each character and (c - '0') is the value of the character c, say c='6', (c - '0') will be the integer 6
@@ -60,26 +82,27 @@ int GetAddressInArray(char c) {   //gets the location of the character in the nu
 }
 
 //Draw a character on screen
-void DrawCharacter(int column, int startAddr)
+void DrawCharacter(int DisplayNumber, int startAddr)
 {
   for (int i = 0; i < 5; i++)
-    lc.setColumn(column, 1 + i,numberArray[startAddr + i]); //1 + i because we skip the first column to center more the character in a single MAX 7219
+    lc.setColumn(DisplayNumber, 1 + i,numberArray[startAddr + i]); //1 + i because we skip the first column to center more the character in a single MAX 7219
 }
 
 void DrawSemiColumnChar()
 {
-  lc.setColumn(2, 7, semiColonChar);//Draw on 2nd MAX 7219 at column 7 the semi colon character as a single column
+  lc.setColumn(2, 7, colonChar);//Draw on 2nd MAX 7219 at column 7 the semi colon character as a single column
 }
 
 void DisplayTime() { //displays the time on the 4 MAX7219
-  USE_SERIAL.print("m1: ");
-  USE_SERIAL.println((char)m1);
-  USE_SERIAL.print("m2: ");
-  USE_SERIAL.println((char)m2);
-  USE_SERIAL.print("s1: ");
-  USE_SERIAL.println((char)s1);
-  USE_SERIAL.print("s2: ");
-  USE_SERIAL.println((char)s2);
+  /*Serial.print("m1: ");
+  Serial.println((char)m1);
+  Serial.print("m2: ");
+  Serial.println((char)m2);
+  Serial.print("s1: ");
+  Serial.println((char)s1);
+  Serial.print("s2: ");
+  Serial.println((char)s2);
+  */
   
   const int startAddress_m1 = GetAddressInArray(m1);
   const int startAddress_m2 = GetAddressInArray(m2);
@@ -96,10 +119,13 @@ void DisplayTime() { //displays the time on the 4 MAX7219
 
 void StartCountDown()
 {
-  unsigned long curTime = millis();
-  EEPROM.put( eeAddress, curTime);  //Store the current time in EEPROM
-  finished              = false;
+  StartTime = millis();
+  bStarted  = true;
+  bFinished = false;
+  bPaused   = false;
+  bBlink    = false;
 }
+
 //Get the 2 digits number into 2 characters, such as inTwoDigitsNumber = 34, outc1 will be '3' and outc2 will be '4'
 void GetCharactersFromNumber(byte inTwoDigitsNumber, char& outc1, char& outc2)
 {
@@ -113,7 +139,7 @@ void GetCharactersFromNumber(byte inTwoDigitsNumber, char& outc1, char& outc2)
     outc1 = '3';
   } else if (inTwoDigitsNumber < 50) {
     outc1 = '4';
-  } else
+  }else
   {
     outc1 = '5';
   }
@@ -124,7 +150,7 @@ void GetCharactersFromNumber(byte inTwoDigitsNumber, char& outc1, char& outc2)
   outc2 = (inTwoDigitsNumber - (10 * (outc1 - '0'))) + '0';
 }
 
-//Convert minutes an seconds into 4 characters to be displayed on screen
+//Convert minutes and seconds into 4 characters to be displayed on screen
 void SetTimeCharacters(int minutes, int seconds)
 {
   GetCharactersFromNumber(minutes, m1, m2);//Put result in globals m1 and m2
@@ -132,41 +158,218 @@ void SetTimeCharacters(int minutes, int seconds)
 }
 
 void setup() {
+  //Init the 4 Max 7219 screen
   for (int i = 0 ; i < devices ; i++) {
     lc.shutdown(i, false);
     lc.setIntensity(i, 0);
     lc.clearDisplay(i)  ;
   }
-  USE_SERIAL.begin(115200);
-  USE_SERIAL.println();
-  USE_SERIAL.print("Devices : ");
-  USE_SERIAL.println(devices);
-  USE_SERIAL.println();
+  
+  //Init serial for print debugging
+  Serial.begin(115200);
+  Serial.println();
+  Serial.print("Devices : ");
+  Serial.println(devices);
+  Serial.println();
 
-  StartCountDown();//Start the count down
+  // Bluetooth 
+  pinMode(RxD, INPUT); 
+  pinMode(TxD, OUTPUT); 
+  BTSerie.begin(9600);
+  delay(500); 
+
+  //Push button
+  pinMode(PUSHBUTTONPIN, INPUT);
+
+  //Check if we have a gameduration stored in EEPROM
+  int oldGameDuration = 0;
+  EEPROM.get(eeAddress, oldGameDuration);
+  if (oldGameDuration > 0 && oldGameDuration < 59){
+      GameDurationInMinutes = oldGameDuration;
+  }
+}
+
+void ClearLCD()
+{
+  for (int i = 0 ; i < devices ; i++) {
+    lc.clearDisplay(i)  ;
+  }
+}
+
+void CheckBluetoothCommands()
+{
+  if (BTSerie.available()) { 
+    char recvChar = BTSerie.read(); 
+    Serial.print(recvChar); 
+    if (recvChar == 'S')//Start
+    {
+      if (false == bFinished && false == bStarted){
+        StartCountDown();//Start the count down
+      }
+    }else
+    if (recvChar == 'P')//Pause
+    {
+      TogglePause();
+    }else
+    if (recvChar == 'R')//Reset
+    {
+      Reset();
+    }
+    else
+    if (recvChar == '+')//Add 5 minutes
+    {
+      ChangeMinutes(5);
+    }
+    else
+    if (recvChar == '-')//Remove 5 minutes
+    {
+      ChangeMinutes(-5);
+    }
+    if (recvChar == 'M')//Add 1 minute
+    {
+      ChangeMinutes(1);
+    }
+    else
+    if (recvChar == 'L')//Remove 1 minute
+    {
+      ChangeMinutes(-1);
+    }
+  } 
+}
+
+//Change the game duration
+void ChangeMinutes(int diff)
+{
+  if (bFinished){
+    return;
+  }
+  if (!bStarted || bPaused){
+    //Change time only when we haven't started or we are in pause mode
+    GameDurationInMinutes += diff;
+    ///Clamp value
+    if (GameDurationInMinutes < 1){
+      GameDurationInMinutes = 1;
+    }else
+    if (GameDurationInMinutes > 59){
+      GameDurationInMinutes = 59;
+    }
+
+    //Store the game duration in EEPROM so we find it when we restart the Arduino
+    EEPROM.put( eeAddress, GameDurationInMinutes);  
+  }
+}
+
+void Reset()
+{
+  bFinished                = false;
+  bStarted                 = false;
+  bPaused                  = false;
+  bBlink                   = bBlinkAtStartup;
+  BlinkStartTime           = millis();
+  TimeElapsedBeforePause   = 0; 
+  StartTime                = 0;
+}
+
+//When entering the Pause mode
+void Pause()
+{
+  TimeElapsedBeforePause += millis() - StartTime; //This is the time we already spent, store it and use += to add it in case we pause several times
+}
+
+//When exiting the Pause mode
+void UnPause()
+{
+  StartTime = millis();//Update StartTime so that we continue conting the time from now
+}
+
+void TogglePause(){
+  if (bFinished || false == bStarted){
+      return;
+  }
+  
+  bPaused = !bPaused;
+  bBlink  = bPaused; //We blink during the pause
+  if (bPaused){
+    BlinkStartTime = millis();
+    Pause();
+  }else{
+    UnPause();
+  }
+}
+
+void CheckForPausePushButton()
+{
+    if (digitalRead(PUSHBUTTONPIN)== HIGH  && bStarted) {         // check if the input is HIGH (button released)
+      TogglePause();
+      delay(500);//Wait a bit to avoid a toggle/untoggle
+    }
 }
 
 //Main loop
 void loop(){
-  if (finished){
-    return;//The count down is finished, nothing to do until we restart
+
+  CheckBluetoothCommands();
+
+  Serial.print("Paused : ");
+  Serial.println(bPaused);
+  Serial.print("Finished : ");
+  Serial.println(bFinished);
+  Serial.print("Started : ");
+  Serial.println(bStarted);
+
+  CheckForPausePushButton();
+
+  Serial.print("bBlink : ");
+  Serial.println(bBlink);
+
+  //Are we in blink mode (when paused or game duration elapsed)
+  if (bBlink){
+    if (millis() - BlinkStartTime > BlinkDelay){
+      BlinkStartTime = millis();
+      bShowTime = !bShowTime; //toggle the show/hide of the current display time
+    }
+
+    Serial.print("bShowTime : ");
+    Serial.println(bShowTime);
+  
+    if (false == bShowTime){
+      ClearLCD();
+      return;
+    }
+  }
+
+  if (bFinished){
+    DisplayTime();
+    return;
   }
   
+  Serial.print("GameDurationInMinutes : ");
+  Serial.println(GameDurationInMinutes);
+
   //Get elapsed time
-  unsigned long oldTime = 0;
-  //millis() is the current time in milliseconds, EEPROM.get(eeAddress, oldTime) is the time at which we started the countdown and our TimerStart is the number of minutes and seconds we want to count
-  const unsigned long remainingTimeInSeconds  = (TimerStart - (millis() - EEPROM.get(eeAddress, oldTime)) ) / 1000;
-  USE_SERIAL.print("remainingTimeInSeconds : ");
-  USE_SERIAL.println(remainingTimeInSeconds);
-  const int minutes = numberOfMinutes(remainingTimeInSeconds);
-  const int seconds = numberOfSeconds(remainingTimeInSeconds);
-  USE_SERIAL.print("minutes : ");
-  USE_SERIAL.println(minutes);
-  USE_SERIAL.print("seconds : ");
-  USE_SERIAL.println(seconds);
-  SetTimeCharacters(minutes, seconds);
-  DisplayTime();
+  unsigned long remainingTimeInSeconds  = GameDurationInMinutes*SECS_PER_MIN*1000;
+  if (bStarted){ //Has the count down started ?
+    if (bPaused){//Are we paused ?
+      remainingTimeInSeconds -= TimeElapsedBeforePause; //We are un pause mode
+    }else{
+      remainingTimeInSeconds -= millis() - StartTime + TimeElapsedBeforePause; //We have started the count down and are not paused
+    }
+  }
+  remainingTimeInSeconds /= 1000; //Convert in seconds
+  
+  Serial.print("remainingTimeInSeconds : ");
+  Serial.println(remainingTimeInSeconds);
+  const int minutes = numberOfMinutes(remainingTimeInSeconds); //get number of minutes (betweeen 0 and 59)
+  const int seconds = numberOfSeconds(remainingTimeInSeconds); //get number of seconds (betweeen 0 and 59)
+  Serial.print("minutes : ");
+  Serial.println(minutes);
+  Serial.print("seconds : ");
+  Serial.println(seconds);
+  SetTimeCharacters(minutes, seconds); //convert minutes and seconds in characters
+  DisplayTime(); //display them on the LCD
   if (m1 == '0'& m2 == '0' & s1 == '0' & s2 == '0') {
-    finished = true;
+    bFinished               = true;
+    TimeElapsedBeforePause  = 0;
+    bBlink                  = true; //blink when finished
   }
 }
