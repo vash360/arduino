@@ -6,18 +6,29 @@
 #include <LedControl.h>
 #include <EEPROM.h>
 #include <SoftwareSerial.h>  //Software Serial Port 
+//#include <BK3254.h>
 
-#define RxD 9      //Pin 9 for RX
-#define TxD 10     //Pin 10 for TX
+#define RxD_BT 9      //Pin 9 for RX for Bluetooth
+#define TxD_BT 10     //Pin 10 for TX for Bluetooth
+#define RxD_BK3254 2      //Pin 2 for RX for BK3254 MP3 player
+#define TxD_BK3254 3     //Pin 3 for TX for BK3254 MP3 player
+
 #define PUSHBUTTONPIN 7   // Pushbutton connected to pin 7
 
 //Bluetoooh recepter HC06
-SoftwareSerial BTSerie(RxD,TxD); 
+SoftwareSerial BTSerie(RxD_BT,TxD_BT); 
+
+//BK3254 MP3 Player
+/*SoftwareSerial BKSerial(RxD_BK3254, TxD_BK3254);
+#define resetBTpin 5
+BK3254 BT(&BKSerial, resetBTpin);
+#define INITVOLUME "10"
+*/
 
 //display screen : Using 4 MAX 7219 connected as a dot matrix LED screen
-static const int din = 13, clk = 11, cs = 12; //pins for the 4 MAX 7219
-static const int devices = 4;//Number of MAX7219 connected together
-LedControl lc = LedControl(din, clk, cs, devices);
+//static const int din = 13, clk = 11, cs = 12; //pins for the 4 MAX 7219
+//static const int devices = 4;//Number of MAX7219 connected together
+LedControl lc = LedControl(13, 11, 12, 4);
 
 //Globals for the chronometer
 static const bool bBlinkAtStartup = false; //do we want the chronometer to blink at startup ?
@@ -46,7 +57,7 @@ static unsigned long BlinkStartTime = 0;//Time stored to toggle when we show/hid
 static char m1 = '0', m2 = '0', s1 = '0', s2 = '0'; //current display time of the game
 
 //INITIAL TIME OF THE GAME
-static int  GameDurationInMinutes = 30;      
+static int GameDurationInMinutes = 30;      
 
 static unsigned long  TimeElapsedBeforePause   = 0;//When entering in pause mode, we store the time elapsed in that variable
 static unsigned long  StartTime                = 0;//Is the time where we start the count down or unpause the game 
@@ -54,10 +65,10 @@ static unsigned long  StartTime                = 0;//Is the time where we start 
 #define eeAddress 0 //Location in EEPROM to store game duration to retrieve it when powering on again the Arduino
 
 //For drawing numbers on the LED screen
-static const byte colonChar = B00100100;//To display a colon character to separate minutes and seconds
+const byte colonChar PROGMEM = B00100100;//To display a colon character to separate minutes and seconds
 
-//Array to display the numbers as 8x5 dots matrix LED
-static const byte numberArray[313] =
+//Array to display the numbers as 8x5 dots matrix LED, set it in flash memory instead of SRAM to save SRAM (using the PROGMEM keyword)
+const byte numberArray[313] PROGMEM =
 {
   B01111100, B10100010, B10010010, B10001010, B01111100, /*columns for 0*/
   B00100010, B01000010, B11111110, B00000010, B00000010, /*columns for 1*/
@@ -85,12 +96,12 @@ int GetAddressInArray(char c) {
 void DrawCharacter(int DisplayNumber, int startAddr)
 {
   for (int i = 0; i < 5; i++)
-    lc.setColumn(DisplayNumber, 1 + i,numberArray[startAddr + i]); //1 + i because we skip the first column to center more the character in a single MAX 7219
+    lc.setColumn(DisplayNumber, 1 + i, pgm_read_byte(&numberArray[startAddr + i])); //1 + i because we skip the first column to center more the character in a single MAX 7219
 }
 
 void DrawSemiColumnChar()
 {
-  lc.setColumn(2, 7, colonChar);//Draw on 2nd MAX 7219 at column 7 the semi colon character as a single column
+  lc.setColumn(2, 7, pgm_read_byte(&colonChar));//Draw on 2nd MAX 7219 at column 7 the semi colon character as a single column
 }
 
 void DisplayTime() { //displays the time on the 4 MAX7219
@@ -159,22 +170,19 @@ void SetTimeCharacters(int minutes, int seconds)
 
 void setup() {
   //Init the 4 Max 7219 screen
-  for (int i = 0 ; i < devices ; i++) {
+  for (int i = 0 ; i < 4/*devices */; i++) {
     lc.shutdown(i, false);
     lc.setIntensity(i, 0);
     lc.clearDisplay(i)  ;
   }
+  delay(500); 
   
   //Init serial for print debugging
   Serial.begin(115200);
-  Serial.println();
-  Serial.print("Devices : ");
-  Serial.println(devices);
-  Serial.println();
 
   // Bluetooth 
-  pinMode(RxD, INPUT); 
-  pinMode(TxD, OUTPUT); 
+  pinMode(RxD_BT, INPUT); 
+  pinMode(TxD_BT, OUTPUT); 
   BTSerie.begin(9600);
   delay(500); 
 
@@ -187,11 +195,39 @@ void setup() {
   if (oldGameDuration > 0 && oldGameDuration < 59){
       GameDurationInMinutes = oldGameDuration;
   }
+
+  //Music
+  /*BT.begin();
+  uint16_t time=millis();
+  const uint16_t timeout=500;
+  while (BT.volumeSet(INITVOLUME) != 1 && time - millis() < timeout);
+  BT.musicModeRepeatOne();
+  BT.switchInputToCard();
+  const int numSongs = BT.cardUsbGetSongsCount();
+  Serial.print("numSongs : ");
+  Serial.println(numSongs);
+  BT.musicTogglePlayPause();
+ BT.getCurrentInput();
+  switch (BT.MusicState) {
+    case (BT.Playing):
+      //Serial.println(F("Playing music"));
+      if (BT.InputSelected == BT.SD || BT.InputSelected == BT.USB) {
+        BT.cardUsbGetSongsCount(); //get number of song on card or USB and currently played song:
+        if (BT.InputSelected == BT.SD) BT.cardGetCurrentPlayingSongNumber();
+        if (BT.InputSelected == BT.USB) BT.usbGetCurrentPlayingSongNumber();
+        Serial.print("Playing song "); Serial.print(BT.CurrentlyPlayingSong); Serial.print(" of "); Serial.print(BT.NumberOfSongs); Serial.println(".");
+      }
+      break;
+    case (BT.Idle):
+      Serial.println(F("Music stoped"));
+      break;
+  }
+  */
 }
 
 void ClearLCD()
 {
-  for (int i = 0 ; i < devices ; i++) {
+  for (int i = 0 ; i < 4/*devices*/ ; i++) {
     lc.clearDisplay(i)  ;
   }
 }
@@ -289,6 +325,7 @@ void TogglePause(){
   
   bPaused = !bPaused;
   bBlink  = bPaused; //We blink during the pause
+  //BT.musicTogglePlayPause();//toggle pause for music
   if (bPaused){
     BlinkStartTime = millis();
     Pause();
