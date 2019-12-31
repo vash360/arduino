@@ -6,12 +6,11 @@
 #include <LedControl.h>
 #include <EEPROM.h>
 #include <SoftwareSerial.h>  //Software Serial Port 
-//#include <BK3254.h>
 
 #define RxD_BT 9      //Pin 9 for RX for Bluetooth
 #define TxD_BT 10     //Pin 10 for TX for Bluetooth
-#define RxD_BK3254 2      //Pin 2 for RX for BK3254 MP3 player
-#define TxD_BK3254 3     //Pin 3 for TX for BK3254 MP3 player
+#define RxD_BK3254 2      //RX for BK3254 MP3 player
+#define TxD_BK3254 3     //TX for BK3254 MP3 player
 
 #define PUSHBUTTONPIN 7   // Pushbutton connected to pin 7
 
@@ -19,11 +18,11 @@
 SoftwareSerial BTSerie(RxD_BT,TxD_BT); 
 
 //BK3254 MP3 Player
-/*SoftwareSerial BKSerial(RxD_BK3254, TxD_BK3254);
-#define resetBTpin 5
-BK3254 BT(&BKSerial, resetBTpin);
-#define INITVOLUME "10"
-*/
+SoftwareSerial BKSerial(RxD_BK3254, TxD_BK3254);
+//Commands for BK3254 can be found from : https://github.com/tomaskovacik/BK3254/wiki/Supported-commands-and-event-send-from-module
+#define SD_CARD_MODE_CMD       "COM+MSD\r\n"
+#define TOGGLE_PLAY_PAUSE_CMD  "COM+PP\r\n"
+#define NEXT_TRACK_CMD         "COM+PN\r\n"
 
 //display screen : Using 4 MAX 7219 connected as a dot matrix LED screen
 //static const int din = 13, clk = 11, cs = 12; //pins for the 4 MAX 7219
@@ -135,6 +134,8 @@ void StartCountDown()
   bFinished = false;
   bPaused   = false;
   bBlink    = false;
+
+  BKSerial.write(TOGGLE_PLAY_PAUSE_CMD);//Send Play music
 }
 
 //Get the 2 digits number into 2 characters, such as inTwoDigitsNumber = 34, outc1 will be '3' and outc2 will be '4'
@@ -197,32 +198,14 @@ void setup() {
   }
 
   //Music
-  /*BT.begin();
-  uint16_t time=millis();
-  const uint16_t timeout=500;
-  while (BT.volumeSet(INITVOLUME) != 1 && time - millis() < timeout);
-  BT.musicModeRepeatOne();
-  BT.switchInputToCard();
-  const int numSongs = BT.cardUsbGetSongsCount();
-  Serial.print("numSongs : ");
-  Serial.println(numSongs);
-  BT.musicTogglePlayPause();
- BT.getCurrentInput();
-  switch (BT.MusicState) {
-    case (BT.Playing):
-      //Serial.println(F("Playing music"));
-      if (BT.InputSelected == BT.SD || BT.InputSelected == BT.USB) {
-        BT.cardUsbGetSongsCount(); //get number of song on card or USB and currently played song:
-        if (BT.InputSelected == BT.SD) BT.cardGetCurrentPlayingSongNumber();
-        if (BT.InputSelected == BT.USB) BT.usbGetCurrentPlayingSongNumber();
-        Serial.print("Playing song "); Serial.print(BT.CurrentlyPlayingSong); Serial.print(" of "); Serial.print(BT.NumberOfSongs); Serial.println(".");
-      }
-      break;
-    case (BT.Idle):
-      Serial.println(F("Music stoped"));
-      break;
-  }
-  */
+  pinMode(RxD_BK3254, INPUT); 
+  pinMode(TxD_BK3254, OUTPUT); 
+  BKSerial.begin(9600);
+  BKSerial.write(SD_CARD_MODE_CMD);
+  BKSerial.write(TOGGLE_PLAY_PAUSE_CMD); //Pause MP3 reading as autoplay is on by default
+
+  //Set SoftwareSerial listening on Bluetooh as the BKSerial software serial is used to send commands only
+  BTSerie.listen();
 }
 
 void ClearLCD()
@@ -325,7 +308,7 @@ void TogglePause(){
   
   bPaused = !bPaused;
   bBlink  = bPaused; //We blink during the pause
-  //BT.musicTogglePlayPause();//toggle pause for music
+  BKSerial.write(TOGGLE_PLAY_PAUSE_CMD);//Send Toggle Play/Pause to music
   if (bPaused){
     BlinkStartTime = millis();
     Pause();
@@ -347,17 +330,18 @@ void loop(){
 
   CheckBluetoothCommands();
 
-  Serial.print("Paused : ");
+  /*Serial.print("Paused : ");
   Serial.println(bPaused);
   Serial.print("Finished : ");
   Serial.println(bFinished);
   Serial.print("Started : ");
   Serial.println(bStarted);
+*/
 
   CheckForPausePushButton();
 
-  Serial.print("bBlink : ");
-  Serial.println(bBlink);
+  //Serial.print("bBlink : ");
+  //Serial.println(bBlink);
 
   //Are we in blink mode (when paused or game duration elapsed)
   if (bBlink){
@@ -380,8 +364,8 @@ void loop(){
     return;
   }
   
-  Serial.print("GameDurationInMinutes : ");
-  Serial.println(GameDurationInMinutes);
+  //Serial.print("GameDurationInMinutes : ");
+  //Serial.println(GameDurationInMinutes);
 
   //Get elapsed time
   unsigned long remainingTimeInSeconds  = GameDurationInMinutes*SECS_PER_MIN*1000;
@@ -394,14 +378,14 @@ void loop(){
   }
   remainingTimeInSeconds /= 1000; //Convert in seconds
   
-  Serial.print("remainingTimeInSeconds : ");
-  Serial.println(remainingTimeInSeconds);
+  //Serial.print("remainingTimeInSeconds : ");
+  //Serial.println(remainingTimeInSeconds);
   const int minutes = numberOfMinutes(remainingTimeInSeconds); //get number of minutes (betweeen 0 and 59)
   const int seconds = numberOfSeconds(remainingTimeInSeconds); //get number of seconds (betweeen 0 and 59)
-  Serial.print("minutes : ");
-  Serial.println(minutes);
-  Serial.print("seconds : ");
-  Serial.println(seconds);
+  //Serial.print("minutes : ");
+  //Serial.println(minutes);
+  //Serial.print("seconds : ");
+  //Serial.println(seconds);
   SetTimeCharacters(minutes, seconds); //convert minutes and seconds in characters
   DisplayTime(); //display them on the LCD
   if (m1 == '0'& m2 == '0' & s1 == '0' & s2 == '0') {
