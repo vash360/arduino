@@ -1,33 +1,41 @@
 
 /* David Lanier - dlanier@free.fr
  *  Escape game count down chronometer 
+ *  With MP3 player support BK3254
+ *  Display screen for remaiing time are 4 MAX7219 Dot LED matrices connected
 */
 
-#include <LedControl.h>
-#include <EEPROM.h>
-#include <SoftwareSerial.h>  //Software Serial Port 
+#include <LedControl.h> //For MAX7219 control
+#include <EEPROM.h> //To store data that survive a power off from Arduino
+#include <SoftwareSerial.h>  //SoftwareSerial Port
 
 #define RxD_BT 9      //Pin 9 for RX for Bluetooth
 #define TxD_BT 10     //Pin 10 for TX for Bluetooth
-#define RxD_BK3254 2      //RX for BK3254 MP3 player
-#define TxD_BK3254 3     //TX for BK3254 MP3 player
+#define RxD_BK3254 2  //RX for BK3254 MP3 player
+#define TxD_BK3254 3  //TX for BK3254 MP3 player
 
 #define PUSHBUTTONPIN 7   // Pushbutton connected to pin 7
 
+//We are using 2 SoftwareSerial and not both can listen (receive commands) at the same time, so we will have to use listen() to switch to one or the other to receive commands
+//But usually the bluetooth BTSerial will be the listener, we will switch to listening on the BKSerial when we want to send a command and get the status as a result
 //Bluetoooh recepter HC06
-SoftwareSerial BTSerie(RxD_BT,TxD_BT); 
+SoftwareSerial BTSerial(RxD_BT,TxD_BT); 
 
-//BK3254 MP3 Player
+//BK3254 MP3 Player, we will use the SD Card to play music
 SoftwareSerial BKSerial(RxD_BK3254, TxD_BK3254);
-//Commands for BK3254 can be found from : https://github.com/tomaskovacik/BK3254/wiki/Supported-commands-and-event-send-from-module
+//UART Commands for BK3254 can be found from : https://github.com/tomaskovacik/BK3254/wiki/Supported-commands-and-event-send-from-module
 #define SD_CARD_MODE_CMD       "COM+MSD\r\n"
 #define TOGGLE_PLAY_PAUSE_CMD  "COM+PP\r\n"
 #define NEXT_TRACK_CMD         "COM+PN\r\n"
+#define PREV_TRACK_CMD         "COM+PV\r\n"
+#define REPEAT_ONE_CMD         "COM+MPM1\r\n"
+#define AUTOPLAY_OFF_CMD       "COM+MP3AUTOPLYOFF\r\n"
+#define SD_CARD_PAUSED         "SD_PU"
 
-//display screen : Using 4 MAX 7219 connected as a dot matrix LED screen
-//static const int din = 13, clk = 11, cs = 12; //pins for the 4 MAX 7219
-//static const int devices = 4;//Number of MAX7219 connected together
-LedControl lc = LedControl(13, 11, 12, 4);
+//Display screen : Using 4 MAX 7219 connected as a dot matrix LED screen
+static const int din = 13, clk = 11, cs = 12; //pins for the 4 MAX 7219
+static const int devices = 4;//Number of MAX7219 connected together
+LedControl lc = LedControl(din, clk, cs, devices);
 
 //Globals for the chronometer
 static const bool bBlinkAtStartup = false; //do we want the chronometer to blink at startup ?
@@ -67,7 +75,7 @@ static unsigned long  StartTime                = 0;//Is the time where we start 
 const byte colonChar PROGMEM = B00100100;//To display a colon character to separate minutes and seconds
 
 //Array to display the numbers as 8x5 dots matrix LED, set it in flash memory instead of SRAM to save SRAM (using the PROGMEM keyword)
-const byte numberArray[313] PROGMEM =
+const byte numberArray[] PROGMEM =
 {
   B01111100, B10100010, B10010010, B10001010, B01111100, /*columns for 0*/
   B00100010, B01000010, B11111110, B00000010, B00000010, /*columns for 1*/
@@ -94,8 +102,9 @@ int GetAddressInArray(char c) {
 //Draw a character on screen
 void DrawCharacter(int DisplayNumber, int startAddr)
 {
-  for (int i = 0; i < 5; i++)
-    lc.setColumn(DisplayNumber, 1 + i, pgm_read_byte(&numberArray[startAddr + i])); //1 + i because we skip the first column to center more the character in a single MAX 7219
+  for (int i = 0; i < 5; i++){
+    lc.setColumn(DisplayNumber, 1 + i, pgm_read_byte(&numberArray[startAddr + i])); //1 + i because we skip the first column to center more the character in a single MAX 7219  
+  }
 }
 
 void DrawSemiColumnChar()
@@ -119,7 +128,7 @@ void DisplayTime() { //displays the time on the 4 MAX7219
   const int startAddress_s1 = GetAddressInArray(s1);
   const int startAddress_s2 = GetAddressInArray(s2);
 
-//Draw the 4 characters to display the remaining time
+  //Draw the 4 characters to display the remaining time
   DrawCharacter(3, startAddress_m1);
   DrawCharacter(2, startAddress_m2);
   DrawCharacter(1, startAddress_s1); //1 is the second MAX 7219 starting from right to left
@@ -135,7 +144,7 @@ void StartCountDown()
   bPaused   = false;
   bBlink    = false;
 
-  BKSerial.write(TOGGLE_PLAY_PAUSE_CMD);//Send Play music
+  PlayMusic();
 }
 
 //Get the 2 digits number into 2 characters, such as inTwoDigitsNumber = 34, outc1 will be '3' and outc2 will be '4'
@@ -169,56 +178,137 @@ void SetTimeCharacters(int minutes, int seconds)
   GetCharactersFromNumber(seconds, s1, s2);//Put result in globals s1 and s2
 }
 
-void setup() {
-  //Init the 4 Max 7219 screen
-  for (int i = 0 ; i < 4/*devices */; i++) {
-    lc.shutdown(i, false);
-    lc.setIntensity(i, 0);
-    lc.clearDisplay(i)  ;
+void ResetMusic()
+{
+  SendCommandAndGetResultFromBK3254(PREV_TRACK_CMD); //Reset to current song, by setting previous song and next song which is current
+  SendCommandAndGetResultFromBK3254(NEXT_TRACK_CMD);
+  PauseMusic();
+}
+
+String SendCommandAndGetResultFromBK3254(char* command)
+{
+  //UART Commands for BK3254 can be found from : https://github.com/tomaskovacik/BK3254/wiki/Supported-commands-and-event-send-from-module
+  String result; 
+  BKSerial.listen(); //Usually the bluetooth is lstening, so we have to tell SoftwareSerial to listen on this port for BK3254 to be able to read the reply from the sent command
+  BKSerial.write(command);//Send command
+  delay(200);//waiting a bit, it is required to get a correct reply (if you don't do this, you only get OK but not always the full reply)
+  while (BKSerial.available() > 0) { 
+    char ch = BKSerial.read(); //read reply char by char
+    //Serial.print("Receive from BKSerial : ");
+    //Serial.println(ch);
+    result += ch; //concat the char into a string result
   }
-  delay(500); 
+  BTSerial.listen();//Put back listening for SoftwareSerial for bluetooth
+  Serial.print("Result from command : ");
+  Serial.print(command);
+  Serial.print(" is : ");
+  Serial.println(result);
+  return result;
+}
+
+//String parsing we parse resultFromSerial to find the substring searchString
+//The resultFromSerial usually contains several substrings separated by "\n"
+bool SearchStringForResult(String resultFromSerial, char* searchString)
+{
+  Serial.print("Searching string : ");
+  Serial.print(resultFromSerial);
+  Serial.print(" for substring : ");
+  Serial.println(searchString);
+  
+  // Tokenize
+   char *tmpbuf = strtok(resultFromSerial.c_str(), "\n");
+   while(tmpbuf != NULL) {
+      String line = tmpbuf;
+      if (line == String(searchString)){
+        Serial.println("result is true");
+        return true;
+      }
+      Serial.println((char *)tmpbuf);
+      tmpbuf = strtok(NULL, "\n");
+   }
+   Serial.println("result is false");
+  return false;
+}
+
+bool IsSDCardPlaused(String resultFromSerial)
+{
+  //Usually the string is a kind of "OK\nSD_PA" or "OK\nSD_PU"
+  //SD_PU meaning SD card is in pause mode and SD_PA means SD card is playing music
+  return SearchStringForResult(resultFromSerial, SD_CARD_PAUSED);
+}
+
+void PauseMusic()
+{
+  String res = SendCommandAndGetResultFromBK3254(TOGGLE_PLAY_PAUSE_CMD);
+  if (false == IsSDCardPlaused(res)){
+    BKSerial.write(TOGGLE_PLAY_PAUSE_CMD);//Set it in pause mode as it is not yet paused
+  }
+}
+
+void PlayMusic()
+{
+  String res = SendCommandAndGetResultFromBK3254(TOGGLE_PLAY_PAUSE_CMD);
+  if (IsSDCardPlaused(res)){
+    BKSerial.write(TOGGLE_PLAY_PAUSE_CMD);//Set it in play mode as it is paused
+  }
+}
+
+//Called once when the Arduino is powered on
+void setup() {
+  //Init the 4 Max 7219 screens
+  for (int i = 0 ; i < devices; i++) {
+    lc.shutdown(i, false);
+    lc.setIntensity(i, 4);
+    lc.clearDisplay(i);
+  }
   
   //Init serial for print debugging
   Serial.begin(115200);
 
-  // Bluetooth 
+  // Bluetooth controller to receive commands from a smartphone/tablet
   pinMode(RxD_BT, INPUT); 
   pinMode(TxD_BT, OUTPUT); 
-  BTSerie.begin(9600);
+  BTSerial.begin(9600);
   delay(500); 
 
-  //Push button
+  //Push button setup
   pinMode(PUSHBUTTONPIN, INPUT);
 
-  //Check if we have a gameduration stored in EEPROM
+  //Check if we have a GameDurationInMinutes value stored in EEPROM 
+  //This is when you modify the initial GameDurationInMinutes and don't want to update it each time you power on the Arduino
   int oldGameDuration = 0;
   EEPROM.get(eeAddress, oldGameDuration);
   if (oldGameDuration > 0 && oldGameDuration < 59){
       GameDurationInMinutes = oldGameDuration;
   }
 
-  //Music
+  //Music setup BK3254 module
+  delay(500);
   pinMode(RxD_BK3254, INPUT); 
   pinMode(TxD_BK3254, OUTPUT); 
-  BKSerial.begin(9600);
-  BKSerial.write(SD_CARD_MODE_CMD);
-  BKSerial.write(TOGGLE_PLAY_PAUSE_CMD); //Pause MP3 reading as autoplay is on by default
-
-  //Set SoftwareSerial listening on Bluetooh as the BKSerial software serial is used to send commands only
-  BTSerie.listen();
+  BKSerial.begin(9600);//We will communicate with it by sending UART commands
+  SendCommandAndGetResultFromBK3254(SD_CARD_MODE_CMD); //Set SD Card reading mode
+  SendCommandAndGetResultFromBK3254(REPEAT_ONE_CMD); //Set repeat 1 to repeat the same song
+  SendCommandAndGetResultFromBK3254(AUTOPLAY_OFF_CMD); //Set autoplay when started off
+  PauseMusic();
+  
+  //Set SoftwareSerial listening on Bluetooh as the BKSerial SoftwareSerial is used to send commands only
+  //And SoftwareSerial can only listen on one port
+  BTSerial.listen();
 }
 
 void ClearLCD()
 {
-  for (int i = 0 ; i < 4/*devices*/ ; i++) {
+  for (int i = 0 ; i < devices ; i++) {
     lc.clearDisplay(i)  ;
   }
 }
 
 void CheckBluetoothCommands()
 {
-  if (BTSerie.available()) { 
-    char recvChar = BTSerie.read(); 
+   //check if the Bluetooth controller has received commands from a smartphone/tablet
+  if (BTSerial.available()) { 
+    char recvChar = BTSerial.read(); //Read a single char
     Serial.print(recvChar); 
     if (recvChar == 'S')//Start
     {
@@ -262,8 +352,9 @@ void ChangeMinutes(int diff)
   if (bFinished){
     return;
   }
+  
   if (!bStarted || bPaused){
-    //Change time only when we haven't started or we are in pause mode
+    //Change time only when we haven't started yet or have reset or we are in pause mode
     GameDurationInMinutes += diff;
     ///Clamp value
     if (GameDurationInMinutes < 1){
@@ -273,7 +364,7 @@ void ChangeMinutes(int diff)
       GameDurationInMinutes = 59;
     }
 
-    //Store the game duration in EEPROM so we find it when we restart the Arduino
+    //Store the game duration in EEPROM so we retrieve it when we restart the Arduino
     EEPROM.put( eeAddress, GameDurationInMinutes);  
   }
 }
@@ -287,6 +378,7 @@ void Reset()
   BlinkStartTime           = millis();
   TimeElapsedBeforePause   = 0; 
   StartTime                = 0;
+  ResetMusic();
 }
 
 //When entering the Pause mode
@@ -307,12 +399,13 @@ void TogglePause(){
   }
   
   bPaused = !bPaused;
-  bBlink  = bPaused; //We blink during the pause
-  BKSerial.write(TOGGLE_PLAY_PAUSE_CMD);//Send Toggle Play/Pause to music
+  bBlink  = bPaused; //We blink during the pause mode
   if (bPaused){
+    PauseMusic();
     BlinkStartTime = millis();
     Pause();
   }else{
+    PlayMusic();
     UnPause();
   }
 }
@@ -350,8 +443,8 @@ void loop(){
       bShowTime = !bShowTime; //toggle the show/hide of the current display time
     }
 
-    Serial.print("bShowTime : ");
-    Serial.println(bShowTime);
+    //Serial.print("bShowTime : ");
+    //Serial.println(bShowTime);
   
     if (false == bShowTime){
       ClearLCD();
