@@ -486,5 +486,6 @@ void loop(){
     bFinished               = true;
     TimeElapsedBeforePause  = 0;
     bBlink                  = true; //blink when finished
+    PauseMusic();
   }
 }
