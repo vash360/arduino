@@ -4,7 +4,7 @@
  *  With MP3 player support BK3254
  *  Display screen for remaiing time are 4 MAX7219 Dot LED matrices connected
 */
-#include <LedControl.h> //For MAX7219 control
+#include <LedControl.h> //For MAX7219 control download from https://github.com/wayoda/LedControl
 #include <EEPROM.h> //To store data that survive a power off from Arduino
 #include <SoftwareSerial.h>  //SoftwareSerial Port
 
