@@ -4,7 +4,6 @@
  *  With MP3 player support BK3254
  *  Display screen for remaiing time are 4 MAX7219 Dot LED matrices connected
 */
-
 #include <LedControl.h> //For MAX7219 control
 #include <EEPROM.h> //To store data that survive a power off from Arduino
 #include <SoftwareSerial.h>  //SoftwareSerial Port
@@ -33,6 +32,7 @@ SoftwareSerial BKSerial(RxD_BK3254, TxD_BK3254);
 #define SD_CARD_PAUSED         "SD_PU"
 
 //Display screen : Using 4 MAX 7219 connected as a dot matrix LED screen
+//see https://www.instructables.com/id/16x8-LED-dot-matrix-with-MAX7219-module/
 static const int din = 13, clk = 11, cs = 12; //pins for the 4 MAX 7219
 static const int devices = 4;//Number of MAX7219 connected together
 LedControl lc = LedControl(din, clk, cs, devices);
@@ -75,6 +75,7 @@ static unsigned long  StartTime                = 0;//Is the time where we start 
 const byte colonChar PROGMEM = B00100100;//To display a colon character to separate minutes and seconds
 
 //Array to display the numbers as 8x5 dots matrix LED, set it in flash memory instead of SRAM to save SRAM (using the PROGMEM keyword)
+//complete alphabet can be found on http://www.gammon.com.au/forum/?id=11516
 const byte numberArray[] PROGMEM =
 {
   B01111100, B10100010, B10010010, B10001010, B01111100, /*columns for 0*/
