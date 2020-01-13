@@ -13,7 +13,8 @@
 #define RxD_BK3254 2  //RX for BK3254 MP3 player
 #define TxD_BK3254 3  //TX for BK3254 MP3 player
 
-#define PUSHBUTTONPIN 7   // Pushbutton connected to pin 7
+#define PUSHBUTTON_PAUSE_PIN 7   // Pushbutton connected to pin 7 for pause
+#define PUSHBUTTON_START_PIN 8   // Pushbutton connected to pin 7 for start/restart
 
 //We are using 2 SoftwareSerial and not both can listen (receive commands) at the same time, so we will have to use listen() to switch to one or the other to receive commands
 //But usually the bluetooth BTSerial will be the listener, we will switch to listening on the BKSerial when we want to send a command and get the status as a result
@@ -28,6 +29,7 @@ SoftwareSerial BKSerial(RxD_BK3254, TxD_BK3254);
 #define NEXT_TRACK_CMD         "COM+PN\r\n"
 #define PREV_TRACK_CMD         "COM+PV\r\n"
 #define REPEAT_ONE_CMD         "COM+MPM1\r\n"
+#define MAX_VOLUME_CMD         "COM+VOLF\r\n" //Maximum volume is 15 but must be set in Hexadecimal hence the : "F" after "VOL"
 #define AUTOPLAY_OFF_CMD       "COM+MP3AUTOPLYOFF\r\n"
 #define SD_CARD_PAUSED         "SD_PU"
 
@@ -273,7 +275,8 @@ void setup() {
   delay(500); 
 
   //Push button setup
-  pinMode(PUSHBUTTONPIN, INPUT);
+  pinMode(PUSHBUTTON_PAUSE_PIN, INPUT);
+  pinMode(PUSHBUTTON_START_PIN, INPUT);
 
   //Check if we have a GameDurationInMinutes value stored in EEPROM 
   //This is when you modify the initial GameDurationInMinutes and don't want to update it each time you power on the Arduino
@@ -291,6 +294,7 @@ void setup() {
   SendCommandAndGetResultFromBK3254(SD_CARD_MODE_CMD); //Set SD Card reading mode
   SendCommandAndGetResultFromBK3254(REPEAT_ONE_CMD); //Set repeat 1 to repeat the same song
   SendCommandAndGetResultFromBK3254(AUTOPLAY_OFF_CMD); //Set autoplay when started off
+  SendCommandAndGetResultFromBK3254(MAX_VOLUME_CMD);//Set volume at maximum level
   PauseMusic();
   
   //Set SoftwareSerial listening on Bluetooh as the BKSerial SoftwareSerial is used to send commands only
@@ -394,6 +398,23 @@ void UnPause()
   StartTime = millis();//Update StartTime so that we continue conting the time from now
 }
 
+void ToggleStartRestart(){
+  
+  if (bFinished){
+    Reset();
+    return;
+  }
+
+  if (false == bStarted){
+    //Start
+    StartCountDown();
+    return;
+  }
+
+  //We have started and are not yet finished
+  Reset();
+}
+
 void TogglePause(){
   if (bFinished || false == bStarted){
       return;
@@ -411,10 +432,15 @@ void TogglePause(){
   }
 }
 
-void CheckForPausePushButton()
+void CheckForPushButtons()
 {
-    if (digitalRead(PUSHBUTTONPIN)== HIGH  && bStarted) {         // check if the input is HIGH (button released)
+    if (digitalRead(PUSHBUTTON_PAUSE_PIN)== HIGH  && bStarted) {         // check if the input is HIGH (button released)
       TogglePause();
+      delay(500);//Wait a bit to avoid a toggle/untoggle
+    }
+
+    if (digitalRead(PUSHBUTTON_START_PIN)== HIGH) {         // check if the input is HIGH (button released)
+      ToggleStartRestart();
       delay(500);//Wait a bit to avoid a toggle/untoggle
     }
 }
@@ -432,7 +458,7 @@ void loop(){
   Serial.println(bStarted);
 */
 
-  CheckForPausePushButton();
+  CheckForPushButtons();
 
   //Serial.print("bBlink : ");
   //Serial.println(bBlink);
