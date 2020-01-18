@@ -46,6 +46,7 @@ static bool bStarted              = false;//Has countdown started ?
 static bool bPaused               = false;//Is countdown paused ?
 static bool bBlink                = bBlinkAtStartup; //To blink before starting or when finished
 static bool bShowTime             = true; //Used in blink mode to show/hide the display to produce a blink
+static bool bReverseScreen        = true; //Used to reverse the screen display
 
 static const int BlinkDelay         = 400; //Delay in milliseconds for blinking
 static unsigned long BlinkStartTime = 0;//Time stored to toggle when we show/hide when blinking
@@ -78,11 +79,13 @@ const byte colonChar PROGMEM = B00100100;//To display a colon character to separ
 
 //Array to display the numbers as 8x5 dots matrix LED, set it in flash memory instead of SRAM to save SRAM (using the PROGMEM keyword)
 //complete alphabet can be found on http://www.gammon.com.au/forum/?id=11516
-const byte numberArray[] PROGMEM =
+const byte numbersArray[] PROGMEM =
 {
   B01111100, B10100010, B10010010, B10001010, B01111100, /*columns for 0*/
   B00100010, B01000010, B11111110, B00000010, B00000010, /*columns for 1*/
+  
   B01000110, B10001010, B10010010, B10010010, B01110010, /*columns for 2*/
+  
   B10000100, B10010010, B10110010, B11010010, B10001100, /*columns for 3*/
   B00011000, B00101000, B01001000, B11111110, B00001000, /*columns for 4*/
   B11110100, B10010010, B10010010, B10010010, B10001100, /*columns for 5*/
@@ -90,6 +93,20 @@ const byte numberArray[] PROGMEM =
   B10000000, B10001110, B10010000, B10100000, B11000000, /*columns for 7*/
   B01101100, B10010010, B10010010, B10010010, B01101100, /*columns for 8*/
   B01100100, B10010010, B10010010, B10010010, B01111100  /*columns for 9*/
+};
+
+const byte reversedNumbersArray[] PROGMEM = //reversed bits horizontally
+{
+  B00111110, B01000101, B01001001, B01010001, B00111110, /*columns for 0*/
+  B01000100, B01000010, B01111111, B01000000, B01000000, /*columns for 1*/
+  B01100010, B01010001, B01001001, B01001001, B01001110, /*columns for 2*/
+  B00100001, B01001001, B01001101, B01001011, B00110001, /*columns for 3*/
+  B00011000, B00010100, B00010010, B01111111, B00010000, /*columns for 4*/
+  B00101111, B01001001, B01001001, B01001001, B00110001, /*columns for 5*/
+  B00111110, B01001001, B01001001, B01001001, B00110010, /*columns for 6*/
+  B00000001, B01110001, B00001001, B00000101, B00000011, /*columns for 7*/
+  B00110110, B01001001, B01001001, B01001001, B00110110, /*columns for 8*/
+  B00100110, B01001001, B01001001, B01001001, B00111110  /*columns for 9*/
 };
 
 //Gets the location of the character in the numberArray
@@ -103,16 +120,24 @@ int GetAddressInArray(char c) {
 }
 
 //Draw a character on screen
-void DrawCharacter(int DisplayNumber, int startAddr)
+void DrawCharacter(int displayNumber, int startAddr)
 {
   for (int i = 0; i < 5; i++){
-    lc.setColumn(DisplayNumber, 1 + i, pgm_read_byte(&numberArray[startAddr + i])); //1 + i because we skip the first column to center more the character in a single MAX 7219  
+    lc.setColumn(displayNumber, 1 + i, pgm_read_byte(&numbersArray[startAddr + i])); //1 + i because we skip the first column to center more the character in a single MAX 7219  
   }
 }
 
-void DrawSemiColumnChar()
+//Draw a character reversed on screen
+void DrawCharacterReversed(int displayNumber, int startAddr)
 {
-  lc.setColumn(2, 7, pgm_read_byte(&colonChar));//Draw on 2nd MAX 7219 at column 7 the semi colon character as a single column
+  for (int i = 0; i < 5; i++){
+    lc.setColumn(displayNumber, 2 + (4-i), (pgm_read_byte(&reversedNumbersArray[startAddr + i]))); //2 + i because we skip the 2 first columns to center more the character in a single MAX 7219, 4-i to read last line first
+  }
+}
+
+void DrawSemiColumnChar(int displayNumber, int column)
+{
+  lc.setColumn(displayNumber, column, pgm_read_byte(&colonChar));//Draw on 2nd MAX 7219 at column 7 the semi colon character as a single column
 }
 
 void DisplayTime() { //displays the time on the 4 MAX7219
@@ -132,11 +157,20 @@ void DisplayTime() { //displays the time on the 4 MAX7219
   const int startAddress_s2 = GetAddressInArray(s2);
 
   //Draw the 4 characters to display the remaining time
-  DrawCharacter(3, startAddress_m1);
-  DrawCharacter(2, startAddress_m2);
-  DrawCharacter(1, startAddress_s1); //1 is the second MAX 7219 starting from right to left
-  DrawCharacter(0, startAddress_s2); //0 is the top most right MAX 7219
-  DrawSemiColumnChar();
+  if (bReverseScreen){
+    DrawCharacterReversed(0, startAddress_m1);
+    DrawCharacterReversed(1, startAddress_m2);
+    DrawCharacterReversed(2, startAddress_s1); 
+    DrawCharacterReversed(3, startAddress_s2); 
+    DrawSemiColumnChar(1, 0);
+  }else{
+    DrawCharacter(3, startAddress_m1);
+    DrawCharacter(2, startAddress_m2);
+    DrawCharacter(1, startAddress_s1); //1 is the second MAX 7219 starting from right to left
+    DrawCharacter(0, startAddress_s2); //0 is the top most right MAX 7219
+    DrawSemiColumnChar(2, 7);
+  }
+  
 }
 
 void StartCountDown()
