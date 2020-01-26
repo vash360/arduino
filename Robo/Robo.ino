@@ -1,22 +1,29 @@
 
 //David Lanier - dlanier@free.fr
 
-//****************************************************************************************************************
-//**  Each time you modify this file and upload it to Arduino, unplug pin 0 and 1 RX and TX or it won't upload. **
-//****************************************************************************************************************
-
 #include <Servo.h>
 #include <SoftwareSerial.h>  //Software Serial Port 
 
-//Is the value which makes the servo motor not rotate.
-//The servo takes a value between 0 and 179 for its speed, values of 95 makes it still and values < 95 turn in one way values > 95 turn the other way, but the range 
-//for maximium speed is about 5 after/before the zero
-const int ZeroServoSpeed      = 95;
-const int SlowForwardSpeed    = 98;
-const int SlowBackwardSpeed   = 92;
-const int FastForwardSpeed    = 179;
-const int FastBackwardSpeed   = 0;
-const int delayTime           = 15;
+//Using software serial for Blue tooth reading values , use Android Blue tooh serial controller application to send chars using a repeatable delay of 60ms
+SoftwareSerial BTSerial(6,7);
+
+String readString = "";
+
+//Distance Sensor SR04
+#define trigPin 4
+#define echoPin 3
+
+//The servo takes a value between 0 and 179 for its speed, 
+//The servos need some intermediate values to go from their minimum values to their maximum
+//You need to calibrate your servos to check what the values are (there is a CalibrateServos function in this code where you can send through Serial a value to test)
+const int ZeroServoSpeed         = 95;
+const int IntermediateServoSpeed = 100;
+const int SlowForwardSpeed       = 98;
+const int SlowBackwardSpeed      = 92;
+const int FastForwardSpeed       = 135;
+const int FastBackwardSpeed      = 0;
+const int delayTime              = 15;
+
 Servo leftWheel, rightWheel;
 
 //Module HC06 Arduino PIN : 1234
@@ -26,17 +33,22 @@ void setup()
 {
   //Use Serial for the Bluetooth HC06
   Serial.begin(9600);
-
+  BTSerial.begin(9600);
+  
   //Servo motors
   rightWheel.attach(9);//Servo motor plugged on D9
   leftWheel.attach(10);//Servo motor plugged on D10
   Stop();
+
+  //Distance sensor
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
 }
 
 void ReadBlueTooth()
 {
-  if (Serial.available()) { 
-    char recvChar = Serial.read(); 
+  if (BTSerial.available()) { 
+    char recvChar = BTSerial.read(); 
     Serial.print("Bluetooth character received :"); 
     Serial.println(recvChar); 
 
@@ -81,6 +93,10 @@ void ReadBlueTooth()
     {
       TurnRightFast();
     }
+    if (recvChar == 'S')
+    {
+      Stop();
+    }
   }else{
      //No bluetooth commands available
      Stop();
@@ -103,23 +119,55 @@ void SetServos(int leftSpeed, int rightspeed)
   //delay(delayTime);
 }
 
+void LeftEngine(int leftSpeed)
+{
+  Serial.print(" leftWheel = ");
+  Serial.println(leftSpeed);
+  
+  leftWheel.write (leftSpeed);
+}
+
+void RightEngine(int rightSpeed)
+{
+  Serial.print(" rightWheel = ");
+  Serial.println(rightSpeed);
+  
+  rightWheel.write (rightSpeed);
+}
+
+void IntermediateLeft()
+{
+  LeftEngine(IntermediateServoSpeed);
+  delay( 2 );
+}
+
+void IntermediateRight()
+{
+  RightEngine(IntermediateServoSpeed);
+  delay( 2 );
+}
+
 void MoveForwardSlow()
 {
+  IntermediateLeft();
   SetServos(SlowForwardSpeed, SlowBackwardSpeed);
 }
 
 void MoveForwardFast()
 {
+  IntermediateLeft();
   SetServos(FastForwardSpeed, FastBackwardSpeed);
 }
 
 void MoveBackwardSlow()
 {
+  IntermediateRight();
   SetServos(SlowBackwardSpeed, SlowForwardSpeed);
 }
 
 void MoveBackwardFast()
 {
+  IntermediateRight();
   SetServos(FastBackwardSpeed, FastForwardSpeed);
 }
 
@@ -135,12 +183,36 @@ void TurnLeftFast()
 
 void TurnRightSlow()
 {
+  IntermediateLeft();
+  IntermediateRight();
   SetServos(SlowForwardSpeed, SlowForwardSpeed);
 }
 
 void TurnRightFast()
 {
+  IntermediateLeft();
+  IntermediateRight();
   SetServos(FastForwardSpeed, FastForwardSpeed);
+}
+
+void CalibrateServos()
+{
+  //Read number sent from Serial
+   while (Serial.available()) {
+    char c = Serial.read();  //gets one byte from serial buffer
+    readString += c; //makes the String readString
+    delay(2);  //slow looping to allow buffer to fill with next character
+  }
+
+ //Convert it, constrain it and send it to the servos
+ if (readString.length() >0) {
+    Serial.println(readString);  //so you can see the captured String
+    int n = readString.toInt();  //convert readString into a number
+    n = constrain(n, -255, 255);//
+    Serial.println(n); //so you can see the integer
+    SetServos(n, n);
+    readString="";
+  } 
 }
 
 void Test()
@@ -171,7 +243,26 @@ void Test()
   }
   Stop();
 }
+
+void ReadDistance()
+{
+   long duration, distance;
+  digitalWrite(trigPin, LOW);  // Added this line
+  delayMicroseconds(2); // Added this line
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10); // Added this line
+  digitalWrite(trigPin, LOW);
+  duration = pulseIn(echoPin, HIGH);
+  distance = (duration/2) / 29.1;
+  Serial.print("Distance : ");
+  Serial.println(distance);
+}
+
 void loop()
 {
+  //CalibrateServos();
+    //MoveForwardFast();
   ReadBlueTooth();
+  ReadDistance();
+  //Test();
 }
